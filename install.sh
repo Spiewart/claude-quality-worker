@@ -317,6 +317,35 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Add Automation Workers section to CLAUDE.md (if not already present)
+# ---------------------------------------------------------------------------
+CLAUDE_MD="$REPO_DIR/CLAUDE.md"
+MARKER="## Automation Workers"
+
+if [[ -f "$CLAUDE_MD" ]]; then
+    if ! grep -qF "$MARKER" "$CLAUDE_MD" 2>/dev/null; then
+        echo "Adding Automation Workers section to CLAUDE.md..."
+        cat >> "$CLAUDE_MD" << 'CLAUDEMD'
+
+## Automation Workers
+
+A **Quality Worker** (claude-quality-worker) runs daily in the background to enforce
+code quality across three domains: lint, types, and docs.
+
+- PRs are opened on `quality/*` branches — **never create branches with this prefix** in interactive sessions
+- Worker configuration lives in `.claude/quality-worker/` (gitignored) — do not modify its files
+- If asked to do bulk type annotation, lint cleanup, or documentation updates, note that
+  the quality worker handles these incrementally. Only do targeted fixes in interactive sessions.
+CLAUDEMD
+        echo "✓ CLAUDE.md updated"
+    else
+        echo "CLAUDE.md already has Automation Workers section"
+    fi
+else
+    echo "No CLAUDE.md found — skipping (create one for best results)"
+fi
+
+# ---------------------------------------------------------------------------
 # Generate and load launchd plist
 # ---------------------------------------------------------------------------
 if [[ "$SKIP_SCHEDULE" == true ]]; then
