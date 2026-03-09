@@ -252,10 +252,12 @@ compute_scope() {
             local remaining
             remaining=$(echo "$all_files" | tail -n +"$((BATCH_SIZE + 1))")
 
-            # Save remaining to state for next run
+            # Save remaining to state for next run (skip in dry-run mode)
             if [[ -n "$remaining" ]]; then
-                # shellcheck disable=SC2086
-                state_set_baseline_remaining "$domain" $remaining
+                if [[ "$DRY_RUN" != true ]]; then
+                    # shellcheck disable=SC2086
+                    state_set_baseline_remaining "$domain" $remaining
+                fi
                 echo "Batch: $BATCH_SIZE files ($(echo "$remaining" | wc -l | tr -d ' ') remaining for next run)" >&2
             else
                 echo "Batch: $total_count files (all in one batch)" >&2
@@ -299,9 +301,11 @@ fi
 if [[ -z "$SCOPE_OUTPUT" ]]; then
     echo ""
     echo "No files in scope for domain '$DOMAIN'. Nothing to do."
-    CURRENT_HEAD=$(cd "$REPO_DIR" && git rev-parse HEAD)
-    state_mark_reviewed "$DOMAIN" "$CURRENT_HEAD" "$DATE" "0"
-    echo "Updated state: last_reviewed_commit → $CURRENT_HEAD"
+    if [[ "$DRY_RUN" != true ]]; then
+        CURRENT_HEAD=$(cd "$REPO_DIR" && git rev-parse HEAD)
+        state_mark_reviewed "$DOMAIN" "$CURRENT_HEAD" "$DATE" "0"
+        echo "Updated state: last_reviewed_commit → $CURRENT_HEAD"
+    fi
     exit 0
 fi
 
