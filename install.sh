@@ -346,6 +346,33 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Add project memory to .claude/CLAUDE.md (Claude Code's /memory file)
+# ---------------------------------------------------------------------------
+CLAUDE_MEMORY="$REPO_DIR/.claude/CLAUDE.md"
+MEMORY_MARKER="# Quality Worker"
+
+if [[ -f "$CLAUDE_MEMORY" ]] && grep -qF "$MEMORY_MARKER" "$CLAUDE_MEMORY" 2>/dev/null; then
+    echo ".claude/CLAUDE.md already has Quality Worker memory"
+else
+    echo "Adding Quality Worker to .claude/CLAUDE.md (project memory)..."
+    # Create .claude dir if needed (should already exist from worker install)
+    mkdir -p "$REPO_DIR/.claude"
+    cat >> "$CLAUDE_MEMORY" << MEMORY
+
+# Quality Worker (installed)
+
+- A **quality worker** (claude-quality-worker) runs daily at ${HOUR}:$(printf '%02d' "$MINUTE"), auto-rotating lint → types → docs
+- Branch prefix: \`${BRANCH_PREFIX}/*\` — reserved for the quality worker, do not use interactively
+- Config: \`.claude/quality-worker/config.sh\`
+- State: \`.claude/quality-worker/state.json\`
+- Prompts: \`.claude/quality-worker/prompts/\` (lint.md, types.md, docs.md)
+- Do not modify \`.claude/quality-worker/\` files — the worker manages its own state and worktrees
+- For bulk type annotation, lint cleanup, or documentation updates: the quality worker handles these incrementally — only do targeted fixes in interactive sessions
+MEMORY
+    echo "✓ .claude/CLAUDE.md updated"
+fi
+
+# ---------------------------------------------------------------------------
 # Generate and load launchd plist
 # ---------------------------------------------------------------------------
 if [[ "$SKIP_SCHEDULE" == true ]]; then
