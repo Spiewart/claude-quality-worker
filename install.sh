@@ -302,6 +302,13 @@ if [[ ! -f "$WORKER_DIR/state.json" ]]; then
     cp "$SCRIPT_DIR/templates/state.json.tpl" "$WORKER_DIR/state.json"
 fi
 
+# Ensure state.json is NOT tracked by git (it's runtime state, not source)
+# If previously committed, untrack it to prevent stash/merge conflicts
+if git -C "$REPO_DIR" ls-files --error-unmatch ".claude/quality-worker/state.json" 2>/dev/null; then
+    echo "Untracking state.json from git (runtime state should not be versioned)..."
+    git -C "$REPO_DIR" rm --cached ".claude/quality-worker/state.json" 2>/dev/null || true
+fi
+
 # ---------------------------------------------------------------------------
 # Ensure .claude is gitignored
 # ---------------------------------------------------------------------------

@@ -155,6 +155,57 @@ state_pick_next_domain() {
 }
 
 # ---------------------------------------------------------------------------
+# Validation & recovery
+# ---------------------------------------------------------------------------
+
+# Validate state.json is parseable JSON. If corrupted (e.g., merge conflict
+# markers from git stash/pull), attempt auto-recovery. Returns 0 on success.
+state_validate() {
+    if [[ ! -f "$STATE_FILE" ]]; then
+        return 0  # Will be created by state_ensure_exists
+    fi
+
+    # Fast path: valid JSON
+    if jq '.' "$STATE_FILE" > /dev/null 2>&1; then
+        return 0
+    fi
+
+    echo "WARNING: state.json is corrupt — attempting auto-recovery"
+
+    # Check for git merge conflict markers
+    if grep -q '^<<<<<<<\|^=======$\|^>>>>>>>' "$STATE_FILE" 2>/dev/null; then
+        echo "  Found merge conflict markers — resolving (keeping upstream version)"
+        local tmp
+        tmp=$(mktemp)
+        # Keep lines from the "ours/upstream" side, discard "theirs/stashed" side
+        awk '
+            /^<<<<<<</ { in_conflict=1; keep=1; next }
+            /^=======$/  { if (in_conflict) { keep=0; next } }
+            /^>>>>>>>/ { in_conflict=0; keep=1; next }
+            keep != 0 { print }
+        ' "$STATE_FILE" > "$tmp"
+
+        if jq '.' "$tmp" > /dev/null 2>&1; then
+            mv "$tmp" "$STATE_FILE"
+            echo "  ✓ state.json recovered from merge conflict"
+            return 0
+        else
+            rm -f "$tmp"
+            echo "  ✗ Merge conflict resolution produced invalid JSON"
+        fi
+    fi
+
+    # Last resort: backup corrupt file and recreate from scratch
+    local backup="${STATE_FILE}.corrupt.$(date +%s)"
+    cp "$STATE_FILE" "$backup"
+    echo "  Backed up corrupt state to: $backup"
+    rm -f "$STATE_FILE"
+    state_ensure_exists
+    echo "  ✓ state.json recreated from template (progress reset)"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # Initialization
 # ---------------------------------------------------------------------------
 

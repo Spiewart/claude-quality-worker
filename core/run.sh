@@ -119,9 +119,10 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 REPO_NAME="$(basename "$REPO_DIR")"
 
 # ---------------------------------------------------------------------------
-# Initialize state file
+# Initialize and validate state file
 # ---------------------------------------------------------------------------
 state_ensure_exists
+state_validate
 
 # ---------------------------------------------------------------------------
 # Domain selection (auto-rotate if not specified)
@@ -181,6 +182,92 @@ if ! command -v jq &>/dev/null; then
     echo "ERROR: jq not found in PATH (required for state management)"
     echo "Install with: brew install jq"
     exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Clean up stale artifacts from previous runs
+# ---------------------------------------------------------------------------
+cleanup_stale_artifacts() {
+    echo ""
+    echo "--- Cleaning up stale artifacts ---"
+    local cleaned=0
+
+    cd "$REPO_DIR"
+
+    # 1. Remove old worktrees (not from today) that are safe to delete
+    if [[ -d "$WORKTREE_BASE" ]]; then
+        for wt_dir in "$WORKTREE_BASE"/*/; do
+            [[ -d "$wt_dir" ]] || continue
+            local wt_name
+            wt_name=$(basename "$wt_dir")
+
+            # Skip today's worktree(s)
+            if [[ "$wt_name" == *"${DATE}"* ]]; then
+                continue
+            fi
+
+            # Check if worktree has uncommitted changes
+            if git -C "$wt_dir" status --porcelain 2>/dev/null | grep -q .; then
+                echo "  Preserving $wt_name (uncommitted changes)"
+                continue
+            fi
+
+            # Check if worktree has unpushed commits
+            local wt_branch
+            wt_branch=$(git -C "$wt_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+            if [[ -n "$wt_branch" ]]; then
+                local local_commits
+                local_commits=$(git -C "$wt_dir" log --oneline "origin/$DEFAULT_BRANCH..HEAD" 2>/dev/null || echo "")
+                local on_remote
+                on_remote=$(git ls-remote --heads origin "$wt_branch" 2>/dev/null || echo "")
+
+                if [[ -n "$local_commits" && -z "$on_remote" ]]; then
+                    echo "  Preserving $wt_name (unpushed local-only commits)"
+                    continue
+                fi
+            fi
+
+            # Safe to remove
+            echo "  Removing stale worktree: $wt_name"
+            git worktree remove --force "$wt_dir" 2>/dev/null || rm -rf "$wt_dir"
+            # Clean up local branch if it exists
+            if [[ -n "$wt_branch" && "$wt_branch" != "HEAD" ]]; then
+                git branch -D "$wt_branch" 2>/dev/null || true
+            fi
+            cleaned=$((cleaned + 1))
+        done
+    fi
+
+    # 2. Delete remote branches for merged/closed PRs
+    local remote_branches
+    remote_branches=$(git branch -r 2>/dev/null | grep "origin/${QUALITY_BRANCH_PREFIX}/" | tr -d ' ' || true)
+    for remote_ref in $remote_branches; do
+        local branch_name="${remote_ref#origin/}"
+
+        # Skip branches with open PRs
+        if gh pr list --head "$branch_name" --state open --json number --jq 'length' 2>/dev/null | grep -q '^[1-9]'; then
+            continue
+        fi
+
+        echo "  Deleting stale remote branch: $branch_name"
+        git push origin --delete "$branch_name" 2>/dev/null || true
+        cleaned=$((cleaned + 1))
+    done
+
+    # 3. Prune worktree metadata
+    git worktree prune 2>/dev/null || true
+
+    if [[ "$cleaned" -gt 0 ]]; then
+        echo "  ✓ Cleaned $cleaned stale artifact(s)"
+    else
+        echo "  No stale artifacts found"
+    fi
+    echo ""
+}
+
+# Run cleanup before starting new work (skip in dry-run mode)
+if [[ "$DRY_RUN" != true ]]; then
+    cleanup_stale_artifacts
 fi
 
 # ---------------------------------------------------------------------------
@@ -352,7 +439,7 @@ if [[ -d "$WORKTREE_DIR" ]]; then
             WORKTREE_DIR="$WORKTREE_BASE/${DOMAIN}-${RUN_ID}"
         else
             echo "Existing worktree is clean (all work pushed). Removing it."
-            git worktree remove "$WORKTREE_DIR" 2>/dev/null || true
+            git worktree remove --force "$WORKTREE_DIR" 2>/dev/null || rm -rf "$WORKTREE_DIR"
             git branch -d "$BRANCH_NAME" 2>/dev/null || true
         fi
     fi
@@ -502,7 +589,7 @@ fi
 
 if [[ "$SAFE_TO_REMOVE" == true ]]; then
     echo "✓ All work committed and pushed. Removing worktree."
-    git worktree remove "$WORKTREE_DIR" 2>/dev/null || true
+    git worktree remove --force "$WORKTREE_DIR" 2>/dev/null || rm -rf "$WORKTREE_DIR"
     git worktree prune 2>/dev/null || true
 else
     echo ""
